@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, Upload, Download, RotateCcw, RefreshCw, Info, Eye, EyeOff } from 'lucide-react';
 
 // EXIF.js library functionality - simplified implementation
@@ -387,6 +387,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [cameraCapabilities, setCameraCapabilities] = useState({
     hasZoom: false,
     hasFlash: false,
@@ -394,35 +395,14 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     isFlashOn: false
   });
 
-  const checkCameraCapabilities = useCallback((mediaStream) => {
-    if (!mediaStream) return;
-    
-    const videoTrack = mediaStream.getVideoTracks()[0];
-    if (!videoTrack) return;
-
-    try {
-      const capabilities = videoTrack.getCapabilities();
-      const settings = videoTrack.getSettings();
-      
-      setCameraCapabilities({
-        hasZoom: 'zoom' in capabilities,
-        hasFlash: 'torch' in capabilities,
-        currentZoom: settings.zoom || null,
-        isFlashOn: settings.torch || false
-      });
-
-      // Add event listener for zoom changes
-      videoTrack.addEventListener('ended', () => {
-        setCameraCapabilities(prev => ({
-          ...prev,
-          currentZoom: null,
-          isFlashOn: false
-        }));
-      });
-
-    } catch (err) {
-      console.error('Error checking camera capabilities:', err);
-    }
+  // Check if device is mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+      const isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase());
+      setIsMobile(isMobileDevice);
+    };
+    checkMobile();
   }, []);
 
   const startCamera = async (facingMode = 'user') => {
@@ -436,83 +416,32 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         stream.getTracks().forEach(track => track.stop());
       }
 
-      // Check HTTPS requirement for mobile
-      const isLocalNetwork = /(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3})/.test(window.location.hostname);
-      if (typeof window !== 'undefined' && window.location.protocol !== 'https:'  && !isLocalNetwork && window.location.hostname !== 'localhost') {
-        throw new Error('Camera requires HTTPS connection on mobile devices');
-      }
-
-      // Check if getUserMedia is supported
-      if (!navigator.mediaDevices) {
-        // Fallback for older browsers
-        if (navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia) {
-          throw new Error('Please use a modern browser for camera access');
-        } else {
-          throw new Error('Camera not supported on this device');
-        }
-      }
-
-      if (!navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera API not available');
-      }
-
-      // Progressive constraint fallback for mobile compatibility
-      const constraintSets = [
-        // Most permissive - try this first for mobile
-        { video: true },
-        // Basic constraints
-        { video: { facingMode: facingMode } },
-        // More specific constraints
-        { 
-          video: { 
-            facingMode: facingMode,
-            width: { min: 320, ideal: 640 },
-            height: { min: 240, ideal: 480 }
-          } 
-        },
-        // Exact facing mode (might fail on some devices)
-        facingMode === 'environment' ? {
-          video: {
-            facingMode: { exact: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        } : {
-          video: {
-            facingMode: { exact: 'user' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        }
-      ];
-
-      let mediaStream = null;
-      let lastError = null;
-
-      // Try each constraint set until one works
-      for (let i = 0; i < constraintSets.length; i++) {
-        try {
-          console.log(`Trying constraint set ${i + 1}:`, constraintSets[i]);
-          mediaStream = await navigator.mediaDevices.getUserMedia(constraintSets[i]);
-          console.log(`Success with constraint set ${i + 1}`);
-          break;
-        } catch (constraintError) {
-          console.log(`Constraint set ${i + 1} failed:`, constraintError);
-          lastError = constraintError;
-          
-          // If it's a permission error, don't try other constraints
-          if (constraintError.name === 'NotAllowedError' || constraintError.name === 'PermissionDeniedError') {
-            throw constraintError;
-          }
-        }
-      }
-
-      if (!mediaStream) {
-        throw lastError || new Error('All camera constraint sets failed');
-      }
+      // Check if running on HTTPS or localhost
+      const isSecureContext = window.isSecureContext;
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       
+      if (!isSecureContext && !isLocalhost) {
+        throw new Error('Camera requires secure connection (HTTPS) or localhost');
+      }
+
+      // Mobile-specific constraints
+      const constraints = isMobile ? {
+        video: {
+          facingMode: facingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      } : {
+        video: {
+          facingMode: facingMode,
+          width: { min: 320, ideal: 640, max: 1280 },
+          height: { min: 240, ideal: 480, max: 720 }
+        }
+      };
+
+      // Try to get camera access
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(mediaStream);
-      checkCameraCapabilities(mediaStream);
       
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -520,19 +449,16 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         // Mobile-specific attributes
         videoRef.current.setAttribute('playsinline', 'true');
         videoRef.current.setAttribute('webkit-playsinline', 'true');
-        videoRef.current.setAttribute('autoplay', 'true');
-        videoRef.current.setAttribute('muted', 'true');
         
         // Force play on mobile
-        const playPromise = videoRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise.catch(playError => {
-            console.log('Video autoplay failed:', playError);
-            // This is often normal on mobile - user might need to interact first
-          });
+        try {
+          await videoRef.current.play();
+        } catch (playError) {
+          console.log('Video autoplay failed:', playError);
+          // This is often normal on mobile - user might need to interact first
         }
       }
-      
+
       setIsLoading(false);
       
     } catch (err) {
@@ -546,24 +472,6 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         setError('No camera found on this device.');
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
         setError('Camera is being used by another app. Please close other camera apps and try again.');
-      } else if (err.name === 'OverconstrainedError') {
-        setError('Camera settings not supported. Trying basic access...');
-        // Retry with most basic constraints
-        setTimeout(() => {
-          navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-              setStream(stream);
-              if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-              }
-              setIsLoading(false);
-              setError(null);
-            })
-            .catch(retryErr => {
-              setError('Camera access failed: ' + retryErr.message);
-            });
-        }, 1000);
-        return;
       } else if (err.message.includes('HTTPS')) {
         setError('Camera requires secure connection (HTTPS). Please access this page via HTTPS.');
       } else {
@@ -758,13 +666,11 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         autoPlay
         playsInline
         muted
-        webkit-playsinline="true"
         style={{
           ...styles.webcamCanvas,
           objectFit: 'cover'
         }}
         onLoadedMetadata={() => {
-          // Ensure video plays on iOS
           if (videoRef.current) {
             videoRef.current.play().catch(console.error);
           }
@@ -787,6 +693,7 @@ const CameraApp = () => {
   const [showUploadedExif, setShowUploadedExif] = useState(false);
   const [isUploadHovered, setIsUploadHovered] = useState(false);
   const [allCapturedImages, setAllCapturedImages] = useState([]);
+  const [isMobile, setIsMobile] = useState(false);
   const webcamRef = useRef(null);
   const fileInputRef = useRef(null);
   const [cameraCapabilities, setCameraCapabilities] = useState({
@@ -795,6 +702,16 @@ const CameraApp = () => {
     currentZoom: null,
     isFlashOn: false
   });
+
+  // Check if device is mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+      const isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase());
+      setIsMobile(isMobileDevice);
+    };
+    checkMobile();
+  }, []);
 
   // Update extractExifData to include zoom and flash information
   const extractExifData = (imageSrc, callback) => {
@@ -852,7 +769,12 @@ const CameraApp = () => {
 
   // Webcam capture function with EXIF extraction
   const captureWebcam = useCallback(() => {
-    const imageSrc = webcamRef.current?.getScreenshot();
+    if (!webcamRef.current) {
+      alert('Camera not initialized. Please wait or refresh the page.');
+      return;
+    }
+
+    const imageSrc = webcamRef.current.getScreenshot();
     if (imageSrc) {
       setWebcamImage(imageSrc);
       
@@ -872,13 +794,17 @@ const CameraApp = () => {
         setAllCapturedImages(prev => [...prev, newCapture]);
       });
     } else {
-      alert('Failed to capture image. Please ensure camera is working.');
+      alert('Failed to capture image. Please ensure camera is working and try again.');
     }
   }, [webcamRef]);
 
   // Switch camera function for mobile devices
   const switchCamera = useCallback(() => {
-    webcamRef.current?.switchCamera();
+    if (!webcamRef.current) {
+      alert('Camera not initialized. Please wait or refresh the page.');
+      return;
+    }
+    webcamRef.current.switchCamera();
   }, [webcamRef]);
 
   // File input change handler with EXIF extraction
@@ -923,7 +849,7 @@ const CameraApp = () => {
         <div style={styles.header}>
           <h1 style={styles.title}>Dual Camera Studio</h1>
           <p style={styles.subtitle}>
-            Professional dual-camera experience with live webcam capture and file upload capabilities
+            {isMobile ? 'Mobile Camera Studio' : 'Professional dual-camera experience with live webcam capture and file upload capabilities'}
           </p>
         </div>
 
@@ -935,7 +861,7 @@ const CameraApp = () => {
               <div style={{...styles.iconWrapper, ...styles.blueIcon}}>
                 <Camera size={24} color="white" />
               </div>
-              <h2 style={styles.cardTitle}>Live Camera</h2>
+              <h2 style={styles.cardTitle}>{isMobile ? 'Mobile Camera' : 'Live Camera'}</h2>
             </div>
             
             <div style={styles.webcamContainer}>
@@ -945,8 +871,8 @@ const CameraApp = () => {
                 width="100%"
                 height="auto"
                 videoConstraints={{
-                  width: 1280,
-                  height: 720,
+                  width: isMobile ? 1280 : 640,
+                  height: isMobile ? 720 : 480,
                   facingMode: "user"
                 }}
               />
@@ -958,38 +884,15 @@ const CameraApp = () => {
                 style={{...styles.button, ...styles.primaryButton}}
               >
                 <Camera size={18} />
-                Capture
+                {isMobile ? 'Take Photo' : 'Capture'}
               </button>
-              <button
-                onClick={switchCamera}
-                style={{...styles.button, ...styles.secondaryButton}}
-              >
-                <RotateCcw size={18} />
-                Switch
-              </button>
-              {cameraCapabilities.hasZoom && (
-                <div style={{...styles.button, ...styles.secondaryButton, flex: 1}}>
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    value={cameraCapabilities.currentZoom || 1}
-                    onChange={(e) => webcamRef.current?.setZoom(parseFloat(e.target.value))}
-                    style={{width: '100%'}}
-                  />
-                  <span style={{marginLeft: '8px'}}>Zoom: {cameraCapabilities.currentZoom?.toFixed(1) || '1.0'}x</span>
-                </div>
-              )}
-              {cameraCapabilities.hasFlash && (
+              {isMobile && (
                 <button
-                  onClick={() => webcamRef.current?.toggleFlash()}
-                  style={{
-                    ...styles.button,
-                    ...styles.secondaryButton,
-                    backgroundColor: cameraCapabilities.isFlashOn ? '#fbbf24' : '#4b5563'
-                  }}
+                  onClick={switchCamera}
+                  style={{...styles.button, ...styles.secondaryButton}}
                 >
-                  {cameraCapabilities.isFlashOn ? 'Flash On' : 'Flash Off'}
+                  <RotateCcw size={18} />
+                  Switch Camera
                 </button>
               )}
             </div>
@@ -1028,90 +931,92 @@ const CameraApp = () => {
             )}
           </div>
 
-          {/* Upload Section */}
-          <div style={styles.card}>
-            <div style={styles.cardHeader}>
-              <div style={{...styles.iconWrapper, ...styles.purpleIcon}}>
-                <Upload size={24} color="white" />
-              </div>
-              <h2 style={styles.cardTitle}>File Upload</h2>
-            </div>
-            
-            <div 
-              style={{
-                ...styles.uploadArea,
-                ...(isUploadHovered ? styles.uploadAreaHover : {})
-              }}
-              onClick={() => fileInputRef.current?.click()}
-              onMouseEnter={() => setIsUploadHovered(true)}
-              onMouseLeave={() => setIsUploadHovered(false)}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setIsUploadHovered(true);
-              }}
-              onDragLeave={() => setIsUploadHovered(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsUploadHovered(false);
-                const files = e.dataTransfer.files;
-                if (files[0]) {
-                  const event = { target: { files: [files[0]] } };
-                  handleFileInputChange(event);
-                }
-              }}
-            >
-              <div style={styles.uploadIcon}>
-                <Upload size={32} color="#9333ea" />
-              </div>
-              <span style={styles.uploadText}>
-                Click to upload or drag & drop
-              </span>
-              <span style={styles.uploadSubtext}>
-                Support for JPG, PNG, GIF, WebP formats
-              </span>
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileInputChange}
-                style={styles.hiddenInput}
-              />
-            </div>
-
-            {/* Uploaded Image Display */}
-            {uploadedImage && (
-              <div style={styles.imageSection}>
-                <h3 style={styles.sectionTitle}>Uploaded Image</h3>
-                <div style={styles.imageContainer}>
-                  <img 
-                    src={uploadedImage} 
-                    alt="Uploaded" 
-                    style={styles.imagePreview}
-                  />
-                  <button
-                    onClick={() => downloadImage(uploadedImage, `upload-${Date.now()}.jpg`)}
-                    style={{...styles.downloadButton, ...styles.greenButton}}
-                    title="Download Image"
-                  >
-                    <Download size={18} />
-                  </button>
-                  <button
-                    onClick={() => setShowUploadedExif(!showUploadedExif)}
-                    style={{...styles.exifButton, ...styles.orangeButton}}
-                    title="View EXIF Data"
-                  >
-                    {showUploadedExif ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
+          {/* Upload Section - Hide on mobile */}
+          {!isMobile && (
+            <div style={styles.card}>
+              <div style={styles.cardHeader}>
+                <div style={{...styles.iconWrapper, ...styles.purpleIcon}}>
+                  <Upload size={24} color="white" />
                 </div>
-                <ExifPanel 
-                  exifData={uploadedExif} 
-                  isVisible={showUploadedExif}
-                  onToggle={() => setShowUploadedExif(!showUploadedExif)}
+                <h2 style={styles.cardTitle}>File Upload</h2>
+              </div>
+              
+              <div 
+                style={{
+                  ...styles.uploadArea,
+                  ...(isUploadHovered ? styles.uploadAreaHover : {})
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                onMouseEnter={() => setIsUploadHovered(true)}
+                onMouseLeave={() => setIsUploadHovered(false)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsUploadHovered(true);
+                }}
+                onDragLeave={() => setIsUploadHovered(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsUploadHovered(false);
+                  const files = e.dataTransfer.files;
+                  if (files[0]) {
+                    const event = { target: { files: [files[0]] } };
+                    handleFileInputChange(event);
+                  }
+                }}
+              >
+                <div style={styles.uploadIcon}>
+                  <Upload size={32} color="#9333ea" />
+                </div>
+                <span style={styles.uploadText}>
+                  Click to upload or drag & drop
+                </span>
+                <span style={styles.uploadSubtext}>
+                  Support for JPG, PNG, GIF, WebP formats
+                </span>
+                
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileInputChange}
+                  style={styles.hiddenInput}
                 />
               </div>
-            )}
-          </div>
+
+              {/* Uploaded Image Display */}
+              {uploadedImage && (
+                <div style={styles.imageSection}>
+                  <h3 style={styles.sectionTitle}>Uploaded Image</h3>
+                  <div style={styles.imageContainer}>
+                    <img 
+                      src={uploadedImage} 
+                      alt="Uploaded" 
+                      style={styles.imagePreview}
+                    />
+                    <button
+                      onClick={() => downloadImage(uploadedImage, `upload-${Date.now()}.jpg`)}
+                      style={{...styles.downloadButton, ...styles.greenButton}}
+                      title="Download Image"
+                    >
+                      <Download size={18} />
+                    </button>
+                    <button
+                      onClick={() => setShowUploadedExif(!showUploadedExif)}
+                      style={{...styles.exifButton, ...styles.orangeButton}}
+                      title="View EXIF Data"
+                    >
+                      {showUploadedExif ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                  <ExifPanel 
+                    exifData={uploadedExif} 
+                    isVisible={showUploadedExif}
+                    onToggle={() => setShowUploadedExif(!showUploadedExif)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -1119,7 +1024,7 @@ const CameraApp = () => {
           <div style={styles.footerContent}>
             <div style={styles.statusDot}></div>
             <p style={styles.footerText}>
-              Camera Studio Ready • {allCapturedImages.length} images captured
+              {isMobile ? 'Mobile Camera Ready' : 'Camera Studio Ready'} • {allCapturedImages.length} images captured
             </p>
           </div>
         </div>
