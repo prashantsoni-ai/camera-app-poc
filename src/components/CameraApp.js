@@ -424,23 +424,50 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         throw new Error('Camera requires secure connection (HTTPS) or localhost');
       }
 
-      // Mobile-specific constraints
-      const constraints = isMobile ? {
-        video: {
-          facingMode: facingMode,
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      } : {
-        video: {
-          facingMode: facingMode,
-          width: { min: 320, ideal: 640, max: 1280 },
-          height: { min: 240, ideal: 480, max: 720 }
-        }
-      };
+      // Check if getUserMedia is supported
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera API not supported in this browser');
+      }
 
-      // Try to get camera access
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      // Try different constraint sets
+      const constraintSets = [
+        // Most permissive
+        { video: true },
+        // Basic constraints
+        { video: { facingMode: facingMode } },
+        // Mobile-specific constraints
+        {
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        }
+      ];
+
+      let mediaStream = null;
+      let lastError = null;
+
+      // Try each constraint set
+      for (const constraints of constraintSets) {
+        try {
+          console.log('Trying constraints:', constraints);
+          mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log('Success with constraints:', constraints);
+          break;
+        } catch (err) {
+          console.log('Failed with constraints:', constraints, err);
+          lastError = err;
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            throw err;
+          }
+        }
+      }
+
+      if (!mediaStream) {
+        throw lastError || new Error('Failed to access camera');
+      }
+
       setStream(mediaStream);
       
       if (videoRef.current) {
@@ -453,9 +480,9 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         // Force play on mobile
         try {
           await videoRef.current.play();
+          console.log('Video playback started successfully');
         } catch (playError) {
-          console.log('Video autoplay failed:', playError);
-          // This is often normal on mobile - user might need to interact first
+          console.error('Video autoplay failed:', playError);
         }
       }
 
@@ -480,53 +507,9 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     }
   };
 
-  // Add methods to control zoom and flash
-  const setZoom = useCallback(async (zoomLevel) => {
-    if (!stream || !cameraCapabilities.hasZoom) return;
-    
-    const videoTrack = stream.getVideoTracks()[0];
-    if (!videoTrack) return;
-
-    try {
-      await videoTrack.applyConstraints({
-        advanced: [{ zoom: zoomLevel }]
-      });
-      
-      const settings = videoTrack.getSettings();
-      setCameraCapabilities(prev => ({
-        ...prev,
-        currentZoom: settings.zoom
-      }));
-    } catch (err) {
-      console.error('Error setting zoom:', err);
-    }
-  }, [stream, cameraCapabilities.hasZoom]);
-
-  const toggleFlash = useCallback(async () => {
-    if (!stream || !cameraCapabilities.hasFlash) return;
-    
-    const videoTrack = stream.getVideoTracks()[0];
-    if (!videoTrack) return;
-
-    try {
-      const newFlashState = !cameraCapabilities.isFlashOn;
-      await videoTrack.applyConstraints({
-        advanced: [{ torch: newFlashState }]
-      });
-      
-      setCameraCapabilities(prev => ({
-        ...prev,
-        isFlashOn: newFlashState
-      }));
-    } catch (err) {
-      console.error('Error toggling flash:', err);
-    }
-  }, [stream, cameraCapabilities.hasFlash, cameraCapabilities.isFlashOn]);
-
-  React.useEffect(() => {
+  // Initialize camera on component mount
+  useEffect(() => {
     startCamera('user');
-
-    // Cleanup function
     return () => {
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
@@ -583,10 +566,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     switchCamera: () => {
       const currentFacingMode = videoConstraints.facingMode === 'user' ? 'environment' : 'user';
       startCamera(currentFacingMode);
-    },
-    getCameraCapabilities: () => cameraCapabilities,
-    setZoom,
-    toggleFlash
+    }
   }));
 
   const retryCamera = () => {
@@ -671,9 +651,14 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
           objectFit: 'cover'
         }}
         onLoadedMetadata={() => {
+          console.log('Video metadata loaded');
           if (videoRef.current) {
             videoRef.current.play().catch(console.error);
           }
+        }}
+        onError={(e) => {
+          console.error('Video error:', e);
+          setError('Video playback error. Please try refreshing the page.');
         }}
       />
       <canvas
@@ -811,6 +796,12 @@ const CameraApp = () => {
   const handleFileInputChange = (event) => {
     const file = event.target.files?.[0];
     if (file) {
+      // Check if file is an image
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onload = (e) => {
         const imageSrc = e.target?.result;
@@ -828,6 +819,17 @@ const CameraApp = () => {
         }
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle file drop
+  const handleFileDrop = (e) => {
+    e.preventDefault();
+    setIsUploadHovered(false);
+    const files = e.dataTransfer.files;
+    if (files[0]) {
+      const event = { target: { files: [files[0]] } };
+      handleFileInputChange(event);
     }
   };
 
@@ -931,92 +933,83 @@ const CameraApp = () => {
             )}
           </div>
 
-          {/* Upload Section - Hide on mobile */}
-          {!isMobile && (
-            <div style={styles.card}>
-              <div style={styles.cardHeader}>
-                <div style={{...styles.iconWrapper, ...styles.purpleIcon}}>
-                  <Upload size={24} color="white" />
-                </div>
-                <h2 style={styles.cardTitle}>File Upload</h2>
+          {/* Upload Section - Show on all devices */}
+          <div style={styles.card}>
+            <div style={styles.cardHeader}>
+              <div style={{...styles.iconWrapper, ...styles.purpleIcon}}>
+                <Upload size={24} color="white" />
               </div>
+              <h2 style={styles.cardTitle}>File Upload</h2>
+            </div>
+            
+            <div 
+              style={{
+                ...styles.uploadArea,
+                ...(isUploadHovered ? styles.uploadAreaHover : {})
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onMouseEnter={() => setIsUploadHovered(true)}
+              onMouseLeave={() => setIsUploadHovered(false)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsUploadHovered(true);
+              }}
+              onDragLeave={() => setIsUploadHovered(false)}
+              onDrop={handleFileDrop}
+            >
+              <div style={styles.uploadIcon}>
+                <Upload size={32} color="#9333ea" />
+              </div>
+              <span style={styles.uploadText}>
+                {isMobile ? 'Tap to select image' : 'Click to upload or drag & drop'}
+              </span>
+              <span style={styles.uploadSubtext}>
+                Support for JPG, PNG, GIF, WebP formats
+              </span>
               
-              <div 
-                style={{
-                  ...styles.uploadArea,
-                  ...(isUploadHovered ? styles.uploadAreaHover : {})
-                }}
-                onClick={() => fileInputRef.current?.click()}
-                onMouseEnter={() => setIsUploadHovered(true)}
-                onMouseLeave={() => setIsUploadHovered(false)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsUploadHovered(true);
-                }}
-                onDragLeave={() => setIsUploadHovered(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsUploadHovered(false);
-                  const files = e.dataTransfer.files;
-                  if (files[0]) {
-                    const event = { target: { files: [files[0]] } };
-                    handleFileInputChange(event);
-                  }
-                }}
-              >
-                <div style={styles.uploadIcon}>
-                  <Upload size={32} color="#9333ea" />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture={isMobile ? "environment" : undefined}
+                onChange={handleFileInputChange}
+                style={styles.hiddenInput}
+              />
+            </div>
+
+            {/* Uploaded Image Display */}
+            {uploadedImage && (
+              <div style={styles.imageSection}>
+                <h3 style={styles.sectionTitle}>Uploaded Image</h3>
+                <div style={styles.imageContainer}>
+                  <img 
+                    src={uploadedImage} 
+                    alt="Uploaded" 
+                    style={styles.imagePreview}
+                  />
+                  <button
+                    onClick={() => downloadImage(uploadedImage, `upload-${Date.now()}.jpg`)}
+                    style={{...styles.downloadButton, ...styles.greenButton}}
+                    title="Download Image"
+                  >
+                    <Download size={18} />
+                  </button>
+                  <button
+                    onClick={() => setShowUploadedExif(!showUploadedExif)}
+                    style={{...styles.exifButton, ...styles.orangeButton}}
+                    title="View EXIF Data"
+                  >
+                    {showUploadedExif ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
-                <span style={styles.uploadText}>
-                  Click to upload or drag & drop
-                </span>
-                <span style={styles.uploadSubtext}>
-                  Support for JPG, PNG, GIF, WebP formats
-                </span>
-                
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileInputChange}
-                  style={styles.hiddenInput}
+                <ExifPanel 
+                  exifData={uploadedExif} 
+                  isVisible={showUploadedExif}
+                  onToggle={() => setShowUploadedExif(!showUploadedExif)}
                 />
               </div>
-
-              {/* Uploaded Image Display */}
-              {uploadedImage && (
-                <div style={styles.imageSection}>
-                  <h3 style={styles.sectionTitle}>Uploaded Image</h3>
-                  <div style={styles.imageContainer}>
-                    <img 
-                      src={uploadedImage} 
-                      alt="Uploaded" 
-                      style={styles.imagePreview}
-                    />
-                    <button
-                      onClick={() => downloadImage(uploadedImage, `upload-${Date.now()}.jpg`)}
-                      style={{...styles.downloadButton, ...styles.greenButton}}
-                      title="Download Image"
-                    >
-                      <Download size={18} />
-                    </button>
-                    <button
-                      onClick={() => setShowUploadedExif(!showUploadedExif)}
-                      style={{...styles.exifButton, ...styles.orangeButton}}
-                      title="View EXIF Data"
-                    >
-                      {showUploadedExif ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                  </div>
-                  <ExifPanel 
-                    exifData={uploadedExif} 
-                    isVisible={showUploadedExif}
-                    onToggle={() => setShowUploadedExif(!showUploadedExif)}
-                  />
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Footer */}
