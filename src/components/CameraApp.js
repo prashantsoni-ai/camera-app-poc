@@ -388,12 +388,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [cameraCapabilities, setCameraCapabilities] = useState({
-    hasZoom: false,
-    hasFlash: false,
-    currentZoom: null,
-    isFlashOn: false
-  });
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Check if device is mobile
   useEffect(() => {
@@ -419,8 +414,9 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
       // Check if running on HTTPS or localhost
       const isSecureContext = window.isSecureContext;
       const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const isGitHubPages = window.location.hostname.includes('github.io');
       
-      if (!isSecureContext && !isLocalhost) {
+      if (!isSecureContext && !isLocalhost && !isGitHubPages) {
         throw new Error('Camera requires secure connection (HTTPS) or localhost');
       }
 
@@ -481,8 +477,15 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         try {
           await videoRef.current.play();
           console.log('Video playback started successfully');
+          setIsInitialized(true);
         } catch (playError) {
           console.error('Video autoplay failed:', playError);
+          // Try to play again after user interaction
+          document.addEventListener('click', () => {
+            if (videoRef.current) {
+              videoRef.current.play().catch(console.error);
+            }
+          }, { once: true });
         }
       }
 
@@ -509,8 +512,13 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
 
   // Initialize camera on component mount
   useEffect(() => {
-    startCamera('user');
+    // Add a small delay to ensure the component is fully mounted
+    const timer = setTimeout(() => {
+      startCamera('user');
+    }, 1000);
+
     return () => {
+      clearTimeout(timer);
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
@@ -522,8 +530,8 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
-      if (!video || !canvas) {
-        console.error('Video or canvas not available');
+      if (!video || !canvas || !isInitialized) {
+        console.error('Video not ready or not initialized');
         return null;
       }
       
