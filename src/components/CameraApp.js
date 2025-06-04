@@ -389,6 +389,12 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [cameraCapabilities, setCameraCapabilities] = useState({
+    hasZoom: false,
+    hasFlash: false,
+    currentZoom: null,
+    isFlashOn: false
+  });
 
   // Check if device is mobile
   useEffect(() => {
@@ -398,6 +404,37 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
       setIsMobile(isMobileDevice);
     };
     checkMobile();
+  }, []);
+
+  const checkCameraCapabilities = useCallback((mediaStream) => {
+    if (!mediaStream) return;
+    
+    const videoTrack = mediaStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    try {
+      const capabilities = videoTrack.getCapabilities();
+      const settings = videoTrack.getSettings();
+      
+      setCameraCapabilities({
+        hasZoom: 'zoom' in capabilities,
+        hasFlash: 'torch' in capabilities,
+        currentZoom: settings.zoom || null,
+        isFlashOn: settings.torch || false
+      });
+
+      // Add event listener for zoom changes
+      videoTrack.addEventListener('ended', () => {
+        setCameraCapabilities(prev => ({
+          ...prev,
+          currentZoom: null,
+          isFlashOn: false
+        }));
+      });
+
+    } catch (err) {
+      console.error('Error checking camera capabilities:', err);
+    }
   }, []);
 
   const startCamera = async (facingMode = 'user') => {
@@ -465,6 +502,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
       }
 
       setStream(mediaStream);
+      checkCameraCapabilities(mediaStream);
       
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -525,6 +563,49 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     };
   }, []);
 
+  // Add methods to control zoom and flash
+  const setZoom = useCallback(async (zoomLevel) => {
+    if (!stream || !cameraCapabilities.hasZoom) return;
+    
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    try {
+      await videoTrack.applyConstraints({
+        advanced: [{ zoom: zoomLevel }]
+      });
+      
+      const settings = videoTrack.getSettings();
+      setCameraCapabilities(prev => ({
+        ...prev,
+        currentZoom: settings.zoom
+      }));
+    } catch (err) {
+      console.error('Error setting zoom:', err);
+    }
+  }, [stream, cameraCapabilities.hasZoom]);
+
+  const toggleFlash = useCallback(async () => {
+    if (!stream || !cameraCapabilities.hasFlash) return;
+    
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    try {
+      const newFlashState = !cameraCapabilities.isFlashOn;
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: newFlashState }]
+      });
+      
+      setCameraCapabilities(prev => ({
+        ...prev,
+        isFlashOn: newFlashState
+      }));
+    } catch (err) {
+      console.error('Error toggling flash:', err);
+    }
+  }, [stream, cameraCapabilities.hasFlash, cameraCapabilities.isFlashOn]);
+
   React.useImperativeHandle(ref, () => ({
     getScreenshot: () => {
       const video = videoRef.current;
@@ -574,7 +655,10 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     switchCamera: () => {
       const currentFacingMode = videoConstraints.facingMode === 'user' ? 'environment' : 'user';
       startCamera(currentFacingMode);
-    }
+    },
+    getCameraCapabilities: () => cameraCapabilities,
+    setZoom,
+    toggleFlash
   }));
 
   const retryCamera = () => {
@@ -687,14 +771,14 @@ const CameraApp = () => {
   const [isUploadHovered, setIsUploadHovered] = useState(false);
   const [allCapturedImages, setAllCapturedImages] = useState([]);
   const [isMobile, setIsMobile] = useState(false);
-  const webcamRef = useRef(null);
-  const fileInputRef = useRef(null);
   const [cameraCapabilities, setCameraCapabilities] = useState({
     hasZoom: false,
     hasFlash: false,
     currentZoom: null,
     isFlashOn: false
   });
+  const webcamRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Check if device is mobile
   useEffect(() => {
@@ -705,6 +789,14 @@ const CameraApp = () => {
     };
     checkMobile();
   }, []);
+
+  // Update camera capabilities when they change
+  useEffect(() => {
+    if (webcamRef.current) {
+      const capabilities = webcamRef.current.getCameraCapabilities();
+      setCameraCapabilities(capabilities);
+    }
+  }, [webcamRef.current?.getCameraCapabilities?.()]);
 
   // Update extractExifData to include zoom and flash information
   const extractExifData = (imageSrc, callback) => {
@@ -798,6 +890,24 @@ const CameraApp = () => {
       return;
     }
     webcamRef.current.switchCamera();
+  }, [webcamRef]);
+
+  // Toggle flash function
+  const toggleFlash = useCallback(() => {
+    if (!webcamRef.current) {
+      alert('Camera not initialized. Please wait or refresh the page.');
+      return;
+    }
+    webcamRef.current.toggleFlash();
+  }, [webcamRef]);
+
+  // Set zoom function
+  const setZoom = useCallback((zoomLevel) => {
+    if (!webcamRef.current) {
+      alert('Camera not initialized. Please wait or refresh the page.');
+      return;
+    }
+    webcamRef.current.setZoom(zoomLevel);
   }, [webcamRef]);
 
   // File input change handler with EXIF extraction
@@ -904,6 +1014,37 @@ const CameraApp = () => {
                   <RotateCcw size={18} />
                   Switch Camera
                 </button>
+              )}
+              {cameraCapabilities.hasFlash && (
+                <button
+                  onClick={toggleFlash}
+                  style={{
+                    ...styles.button,
+                    ...styles.secondaryButton,
+                    backgroundColor: cameraCapabilities.isFlashOn ? '#fbbf24' : '#4b5563'
+                  }}
+                >
+                  {cameraCapabilities.isFlashOn ? 'Flash On' : 'Flash Off'}
+                </button>
+              )}
+              {cameraCapabilities.hasZoom && (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    onClick={() => setZoom(Math.max(1, (cameraCapabilities.currentZoom || 1) - 0.5))}
+                    style={{...styles.button, ...styles.secondaryButton}}
+                  >
+                    -
+                  </button>
+                  <span style={{ color: '#ffffff' }}>
+                    {cameraCapabilities.currentZoom ? `${cameraCapabilities.currentZoom}x` : '1x'}
+                  </span>
+                  <button
+                    onClick={() => setZoom(Math.min(5, (cameraCapabilities.currentZoom || 1) + 0.5))}
+                    style={{...styles.button, ...styles.secondaryButton}}
+                  >
+                    +
+                  </button>
+                </div>
               )}
             </div>
 
