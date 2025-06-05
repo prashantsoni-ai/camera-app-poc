@@ -611,8 +611,8 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
-      if (!video || !canvas || !isInitialized) {
-        console.error('Video not ready or not initialized');
+      if (!video || !canvas) {
+        console.error('Video or canvas not initialized');
         return null;
       }
       
@@ -859,8 +859,12 @@ const CameraApp = () => {
       return;
     }
 
-    const imageSrc = webcamRef.current.getScreenshot();
-    if (imageSrc) {
+    try {
+      const imageSrc = webcamRef.current.getScreenshot();
+      if (!imageSrc) {
+        throw new Error('Failed to capture image');
+      }
+
       setWebcamImage(imageSrc);
       
       // Extract EXIF data
@@ -878,10 +882,11 @@ const CameraApp = () => {
         
         setAllCapturedImages(prev => [...prev, newCapture]);
       });
-    } else {
+    } catch (error) {
+      console.error('Capture error:', error);
       alert('Failed to capture image. Please ensure camera is working and try again.');
     }
-  }, [webcamRef]);
+  }, [webcamRef, extractExifData]);
 
   // Switch camera function for mobile devices
   const switchCamera = useCallback(() => {
@@ -889,7 +894,12 @@ const CameraApp = () => {
       alert('Camera not initialized. Please wait or refresh the page.');
       return;
     }
-    webcamRef.current.switchCamera();
+    try {
+      webcamRef.current.switchCamera();
+    } catch (error) {
+      console.error('Switch camera error:', error);
+      alert('Failed to switch camera. Please try again.');
+    }
   }, [webcamRef]);
 
   // Toggle flash function
@@ -898,7 +908,12 @@ const CameraApp = () => {
       alert('Camera not initialized. Please wait or refresh the page.');
       return;
     }
-    webcamRef.current.toggleFlash();
+    try {
+      webcamRef.current.toggleFlash();
+    } catch (error) {
+      console.error('Toggle flash error:', error);
+      alert('Failed to toggle flash. Please try again.');
+    }
   }, [webcamRef]);
 
   // Set zoom function
@@ -907,7 +922,12 @@ const CameraApp = () => {
       alert('Camera not initialized. Please wait or refresh the page.');
       return;
     }
-    webcamRef.current.setZoom(zoomLevel);
+    try {
+      webcamRef.current.setZoom(zoomLevel);
+    } catch (error) {
+      console.error('Set zoom error:', error);
+      alert('Failed to set zoom. Please try again.');
+    }
   }, [webcamRef]);
 
   // File input change handler with EXIF extraction
