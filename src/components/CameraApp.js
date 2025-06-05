@@ -395,6 +395,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     currentZoom: null,
     isFlashOn: false
   });
+  const [debugInfo, setDebugInfo] = useState("");
 
   // Check if device is mobile
   useEffect(() => {
@@ -415,15 +416,12 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     try {
       const capabilities = videoTrack.getCapabilities();
       const settings = videoTrack.getSettings();
-      
       setCameraCapabilities({
         hasZoom: 'zoom' in capabilities,
         hasFlash: 'torch' in capabilities,
         currentZoom: settings.zoom || null,
         isFlashOn: settings.torch || false
       });
-
-      // Add event listener for zoom changes
       videoTrack.addEventListener('ended', () => {
         setCameraCapabilities(prev => ({
           ...prev,
@@ -431,8 +429,8 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
           isFlashOn: false
         }));
       });
-
     } catch (err) {
+      setDebugInfo(prev => prev + "\nError checking camera capabilities: " + err);
       console.error('Error checking camera capabilities:', err);
     }
   }, []);
@@ -442,33 +440,23 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
       setIsLoading(true);
       setError(null);
       setPermissionDenied(false);
-      
-      // Stop existing stream if any
+      setDebugInfo("Starting camera...\n");
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
-
-      // Check if running on HTTPS or localhost
       const isSecureContext = window.isSecureContext;
       const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       const isGitHubPages = window.location.hostname.includes('github.io');
-      
+      setDebugInfo(prev => prev + `Secure: ${isSecureContext}, Localhost: ${isLocalhost}, GitHubPages: ${isGitHubPages}\n`);
       if (!isSecureContext && !isLocalhost && !isGitHubPages) {
         throw new Error('Camera requires secure connection (HTTPS) or localhost');
       }
-
-      // Check if getUserMedia is supported
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Camera API not supported in this browser');
       }
-
-      // Try different constraint sets
       const constraintSets = [
-        // Most permissive
         { video: true },
-        // Basic constraints
         { video: { facingMode: facingMode } },
-        // Mobile-specific constraints
         {
           video: {
             facingMode: facingMode,
@@ -477,62 +465,51 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
           }
         }
       ];
-
       let mediaStream = null;
       let lastError = null;
-
-      // Try each constraint set
       for (const constraints of constraintSets) {
         try {
-          console.log('Trying constraints:', constraints);
+          setDebugInfo(prev => prev + `Trying constraints: ${JSON.stringify(constraints)}\n`);
           mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-          console.log('Success with constraints:', constraints);
+          setDebugInfo(prev => prev + `Success with constraints: ${JSON.stringify(constraints)}\n`);
           break;
         } catch (err) {
-          console.log('Failed with constraints:', constraints, err);
+          setDebugInfo(prev => prev + `Failed with constraints: ${JSON.stringify(constraints)}: ${err}\n`);
           lastError = err;
           if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
             throw err;
           }
         }
       }
-
       if (!mediaStream) {
         throw lastError || new Error('Failed to access camera');
       }
-
       setStream(mediaStream);
       checkCameraCapabilities(mediaStream);
-      
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
-        
-        // Mobile-specific attributes
         videoRef.current.setAttribute('playsinline', 'true');
         videoRef.current.setAttribute('webkit-playsinline', 'true');
-        
-        // Force play on mobile
+        setDebugInfo(prev => prev + 'Set video srcObject.\n');
         try {
           await videoRef.current.play();
-          console.log('Video playback started successfully');
+          setDebugInfo(prev => prev + 'Video playback started successfully.\n');
           setIsInitialized(true);
         } catch (playError) {
-          console.error('Video autoplay failed:', playError);
-          // Try to play again after user interaction
+          setDebugInfo(prev => prev + 'Video autoplay failed: ' + playError + '\n');
           document.addEventListener('click', () => {
             if (videoRef.current) {
-              videoRef.current.play().catch(console.error);
+              videoRef.current.play().catch(e => setDebugInfo(prev => prev + 'Play on click failed: ' + e + '\n'));
             }
           }, { once: true });
         }
+      } else {
+        setDebugInfo(prev => prev + 'videoRef.current is null.\n');
       }
-
       setIsLoading(false);
-      
     } catch (err) {
-      console.error('Camera access error:', err);
+      setDebugInfo(prev => prev + 'Camera access error: ' + err + '\n');
       setIsLoading(false);
-      
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setPermissionDenied(true);
         setError('Camera permission denied. Please allow camera access in your browser settings and refresh the page.');
@@ -548,13 +525,10 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     }
   };
 
-  // Initialize camera on component mount
   useEffect(() => {
-    // Add a small delay to ensure the component is fully mounted
     const timer = setTimeout(() => {
       startCamera('user');
     }, 1000);
-
     return () => {
       clearTimeout(timer);
       if (stream) {
@@ -702,6 +676,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
           <div style={{ fontSize: 'clamp(10px, 2vw, 12px)', color: '#9ca3af', marginBottom: '16px', lineHeight: '1.4' }}>
             {error}
           </div>
+          <pre style={{ color: '#fbbf24', fontSize: 12, textAlign: 'left', maxHeight: 200, overflow: 'auto', background: '#222', padding: 8, borderRadius: 8 }}>{debugInfo}</pre>
           <button
             onClick={retryCamera}
             style={{
@@ -727,6 +702,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         <div style={{ fontSize: 'clamp(10px, 2vw, 12px)', color: '#9ca3af', marginTop: '4px' }}>
           Please allow camera access when prompted
         </div>
+        <pre style={{ color: '#fbbf24', fontSize: 12, textAlign: 'left', maxHeight: 200, overflow: 'auto', background: '#222', padding: 8, borderRadius: 8 }}>{debugInfo}</pre>
       </div>
     );
   }
@@ -743,13 +719,13 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
           objectFit: 'cover'
         }}
         onLoadedMetadata={() => {
-          console.log('Video metadata loaded');
+          setDebugInfo(prev => prev + 'Video metadata loaded.\n');
           if (videoRef.current) {
-            videoRef.current.play().catch(console.error);
+            videoRef.current.play().catch(e => setDebugInfo(prev => prev + 'Play on loadedmetadata failed: ' + e + '\n'));
           }
         }}
         onError={(e) => {
-          console.error('Video error:', e);
+          setDebugInfo(prev => prev + 'Video error: ' + e + '\n');
           setError('Video playback error. Please try refreshing the page.');
         }}
       />
@@ -757,6 +733,7 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         ref={canvasRef}
         style={{ display: 'none' }}
       />
+      <pre style={{ color: '#fbbf24', fontSize: 12, textAlign: 'left', maxHeight: 200, overflow: 'auto', background: '#222', padding: 8, borderRadius: 8, position: 'absolute', left: 0, bottom: 0, width: '100%' }}>{debugInfo}</pre>
     </div>
   );
 };
