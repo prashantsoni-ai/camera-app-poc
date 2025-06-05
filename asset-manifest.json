@@ -1,15 +1,15 @@
 {
   "files": {
     "main.css": "/camera-app-poc/static/css/main.f855e6bc.css",
-    "main.js": "/camera-app-poc/static/js/main.dd64d83f.js",
+    "main.js": "/camera-app-poc/static/js/main.a4d47527.js",
     "static/js/453.14f9daa1.chunk.js": "/camera-app-poc/static/js/453.14f9daa1.chunk.js",
     "index.html": "/camera-app-poc/index.html",
     "main.f855e6bc.css.map": "/camera-app-poc/static/css/main.f855e6bc.css.map",
-    "main.dd64d83f.js.map": "/camera-app-poc/static/js/main.dd64d83f.js.map",
+    "main.a4d47527.js.map": "/camera-app-poc/static/js/main.a4d47527.js.map",
     "453.14f9daa1.chunk.js.map": "/camera-app-poc/static/js/453.14f9daa1.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.f855e6bc.css",
-    "static/js/main.dd64d83f.js"
+    "static/js/main.a4d47527.js"
   ]
 }
