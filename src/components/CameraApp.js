@@ -506,19 +506,20 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
   };
 
   // Assign stream to video element when both are ready, retry if needed
-  useEffect(() => {
+  React.useLayoutEffect(() => {
     let retryCount = 0;
     function tryAssignStream() {
+      setDebugInfo(prev => prev + `tryAssignStream called. videoRef.current: ${videoRef.current}\n`);
       if (stream && videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute('playsinline', 'true');
         videoRef.current.setAttribute('webkit-playsinline', 'true');
-        setDebugInfo(prev => prev + 'Set video srcObject in useEffect.\n');
+        setDebugInfo(prev => prev + 'Set video srcObject in useLayoutEffect.\n');
         videoRef.current.play().then(() => {
-          setDebugInfo(prev => prev + 'Video playback started successfully in useEffect.\n');
+          setDebugInfo(prev => prev + 'Video playback started successfully in useLayoutEffect.\n');
           setIsInitialized(true);
         }).catch(e => {
-          setDebugInfo(prev => prev + 'Video play failed in useEffect: ' + e + '\n');
+          setDebugInfo(prev => prev + 'Video play failed in useLayoutEffect: ' + e + '\n');
         });
       } else if (stream && retryCount < 10) {
         setDebugInfo(prev => prev + `videoRef.current is null, retrying (${retryCount + 1})...\n`);
@@ -528,11 +529,12 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         setDebugInfo(prev => prev + 'videoRef.current is still null after retries.\n');
       }
     }
+    setDebugInfo(prev => prev + 'useLayoutEffect for stream assignment running.\n');
     if (stream) {
       tryAssignStream();
     }
-    // Cleanup: stop stream on unmount
     return () => {
+      setDebugInfo(prev => prev + 'Cleaning up stream assignment effect.\n');
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
@@ -704,6 +706,17 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
         <div style={{ fontSize: 'clamp(10px, 2vw, 12px)', color: '#9ca3af', marginTop: '4px' }}>
           Please allow camera access when prompted
         </div>
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          style={{
+            ...styles.webcamCanvas,
+            objectFit: 'cover',
+            opacity: 0.3
+          }}
+        />
         <pre style={{ color: '#fbbf24', fontSize: 12, textAlign: 'left', maxHeight: 200, overflow: 'auto', background: '#222', padding: 8, borderRadius: 8 }}>{debugInfo}</pre>
       </div>
     );
@@ -778,7 +791,7 @@ const CameraApp = () => {
   }, [webcamRef.current?.getCameraCapabilities?.()]);
 
   // Update extractExifData to include zoom and flash information
-  const extractExifData = (imageSrc, callback) => {
+  const extractExifData = useCallback((imageSrc, callback) => {
     const img = new Image();
     img.onload = () => {
       EXIF.getData(img, function() {
@@ -829,7 +842,7 @@ const CameraApp = () => {
       });
     };
     img.src = imageSrc;
-  };
+  });
 
   // Webcam capture function with EXIF extraction
   const captureWebcam = useCallback(() => {
