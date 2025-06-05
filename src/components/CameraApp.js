@@ -505,21 +505,39 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     }
   };
 
-  // Assign stream to video element when both are ready
+  // Assign stream to video element when both are ready, retry if needed
   useEffect(() => {
-    if (stream && videoRef.current) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.setAttribute('playsinline', 'true');
-      videoRef.current.setAttribute('webkit-playsinline', 'true');
-      setDebugInfo(prev => prev + 'Set video srcObject in useEffect.\n');
-      videoRef.current.play().then(() => {
-        setDebugInfo(prev => prev + 'Video playback started successfully in useEffect.\n');
-        setIsInitialized(true);
-      }).catch(e => {
-        setDebugInfo(prev => prev + 'Video play failed in useEffect: ' + e + '\n');
-      });
+    let retryCount = 0;
+    function tryAssignStream() {
+      if (stream && videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.setAttribute('webkit-playsinline', 'true');
+        setDebugInfo(prev => prev + 'Set video srcObject in useEffect.\n');
+        videoRef.current.play().then(() => {
+          setDebugInfo(prev => prev + 'Video playback started successfully in useEffect.\n');
+          setIsInitialized(true);
+        }).catch(e => {
+          setDebugInfo(prev => prev + 'Video play failed in useEffect: ' + e + '\n');
+        });
+      } else if (stream && retryCount < 10) {
+        setDebugInfo(prev => prev + `videoRef.current is null, retrying (${retryCount + 1})...\n`);
+        retryCount++;
+        setTimeout(tryAssignStream, 100);
+      } else if (stream) {
+        setDebugInfo(prev => prev + 'videoRef.current is still null after retries.\n');
+      }
     }
-  }, [stream, videoRef.current]);
+    if (stream) {
+      tryAssignStream();
+    }
+    // Cleanup: stop stream on unmount
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [stream]);
 
   // Add methods to control zoom and flash
   const setZoom = useCallback(async (zoomLevel) => {
