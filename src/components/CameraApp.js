@@ -486,26 +486,6 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
       }
       setStream(mediaStream);
       checkCameraCapabilities(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        videoRef.current.setAttribute('playsinline', 'true');
-        videoRef.current.setAttribute('webkit-playsinline', 'true');
-        setDebugInfo(prev => prev + 'Set video srcObject.\n');
-        try {
-          await videoRef.current.play();
-          setDebugInfo(prev => prev + 'Video playback started successfully.\n');
-          setIsInitialized(true);
-        } catch (playError) {
-          setDebugInfo(prev => prev + 'Video autoplay failed: ' + playError + '\n');
-          document.addEventListener('click', () => {
-            if (videoRef.current) {
-              videoRef.current.play().catch(e => setDebugInfo(prev => prev + 'Play on click failed: ' + e + '\n'));
-            }
-          }, { once: true });
-        }
-      } else {
-        setDebugInfo(prev => prev + 'videoRef.current is null.\n');
-      }
       setIsLoading(false);
     } catch (err) {
       setDebugInfo(prev => prev + 'Camera access error: ' + err + '\n');
@@ -525,17 +505,21 @@ const Webcam = ({ ref, screenshotFormat, width, height, videoConstraints }) => {
     }
   };
 
+  // Assign stream to video element when both are ready
   useEffect(() => {
-    const timer = setTimeout(() => {
-      startCamera('user');
-    }, 1000);
-    return () => {
-      clearTimeout(timer);
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.setAttribute('playsinline', 'true');
+      videoRef.current.setAttribute('webkit-playsinline', 'true');
+      setDebugInfo(prev => prev + 'Set video srcObject in useEffect.\n');
+      videoRef.current.play().then(() => {
+        setDebugInfo(prev => prev + 'Video playback started successfully in useEffect.\n');
+        setIsInitialized(true);
+      }).catch(e => {
+        setDebugInfo(prev => prev + 'Video play failed in useEffect: ' + e + '\n');
+      });
+    }
+  }, [stream, videoRef.current]);
 
   // Add methods to control zoom and flash
   const setZoom = useCallback(async (zoomLevel) => {
